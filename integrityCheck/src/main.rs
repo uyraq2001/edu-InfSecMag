@@ -8,20 +8,26 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let command = &args[1];
     let relative_path = RelativePath::new(&args[2]);
-    let root = current_dir().unwrap();
+    let root = current_dir().unwrap_or_else(|error| {
+        panic!("Attempt to get current dir failed with error: \n{error:?}");
+    });
     let full_path = relative_path.to_path(&root);
     if command == "init" {
         let _ = init(Path::new(&full_path));
+        println!("Dirrectory {full_path:?} have been initialized")
     } else if args.len() > 2 && command == "check" {
         let res = check(Path::new(&full_path)).unwrap();
-        println!("The following file have been changed:\n{res:?}");
+        if res.len() == 0 {
+            println!("Dirrectory {full_path:?} have been checked.No files have been changed.");
+        } else {
+            println!("Dirrectory {full_path:?} have been checked. The following files have been changed:\n{res:?}");
+        }
     }
 }
 
 fn hash_sum(entry_path: &Path) -> Option<u16> {
     if entry_path
-        .file_name()
-        .unwrap()
+        .file_name()?
         .to_str()
         .map_or(false, |s| s.to_lowercase().ends_with(".ic"))
     {
@@ -49,21 +55,14 @@ where
     F: FnMut(PathBuf) -> io::Result<()>,
 {
     let dir_iterator = fs::read_dir(path).unwrap_or_else(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            panic!("Directory \"{path:?}\" not found");
-        } else if error.kind() == io::ErrorKind::PermissionDenied {
-            panic!("Permission to \"{path:?}\" was denied");
-        } else {
-            panic!("Unknown file system problem: {error:?}");
-        }
+        panic!("File system error: \n{error:?}\n for file: \"{path:?}\".");
     });
     for entry in dir_iterator {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => panic!("Unknown file system entry problem: {error:?}"),
-        };
+        let entry = entry.unwrap_or_else(|error| {
+            panic!("File system error: \n{error:?}");
+        });
         let entry_path = entry.path();
-        func(entry_path);
+        _ = func(entry_path);
     }
 }
 
@@ -75,7 +74,7 @@ fn check(path: &Path) -> io::Result<Vec<PathBuf>> {
             result.append(&mut subdir_result);
             return Ok(());
         }
-        if !check_single(&entry_path).unwrap() {
+        if !check_single(&entry_path)? {
             result.push(entry_path);
         }
         return Ok(());
@@ -88,7 +87,7 @@ fn init(path: &Path) -> io::Result<()> {
         if entry_path.is_dir() {
             init(&entry_path)?;
         } else {
-            _ = init_single(&entry_path);
+            init_single(&entry_path)?;
         }
         return Ok(());
     });
@@ -96,23 +95,24 @@ fn init(path: &Path) -> io::Result<()> {
 }
 
 fn read_hash(entry_path: &Path) -> Option<u16> {
-    return Some(
-        fs::read_to_string(format!("{}.ic", entry_path.display().to_string()))
-            .unwrap()
-            .to_string()
-            .parse::<u16>()
-            .unwrap(),
-    );
+    let hash_str = match fs::read_to_string(format!("{}.ic", entry_path.display().to_string())) {
+        Ok(val) => val,
+        Err(_) => return None,
+    };
+    match hash_str.parse::<u16>() {
+        Ok(val) => return Some(val),
+        Err(_) => return None,
+    }
 }
 
 fn check_single(entry_path: &PathBuf) -> io::Result<bool> {
     let hash = match hash_sum(&entry_path) {
         Some(val) => val,
-        None => return Ok(true),
+        None => return Ok(false),
     };
     let recorded = match read_hash(&entry_path) {
         Some(val) => val,
-        None => return Ok(true),
+        None => return Ok(false),
     };
     if hash != recorded {
         return Ok(false);
