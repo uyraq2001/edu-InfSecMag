@@ -3,6 +3,13 @@ use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+pub enum CheckResult {
+    Removed,
+    Added,
+    Changed,
+    Secure,
+}
+
 pub fn hash_sum(entry_path: &Path) -> Option<u16> {
     if entry_path
         .file_name()?
@@ -45,31 +52,31 @@ where
     }
 }
 
-pub fn check(path: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut result: Vec<PathBuf> = Vec::new();
+pub fn check(path: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut changed: Vec<PathBuf> = Vec::new();
+    let mut removed: Vec<PathBuf> = Vec::new();
+    let mut added: Vec<PathBuf> = Vec::new();
     apply_to_dir(path, |entry_path: PathBuf| -> io::Result<()> {
         if entry_path.is_dir() {
             let mut subdir_result = check(&entry_path)?;
-            result.append(&mut subdir_result);
+            changed.append(&mut subdir_result.0);
+            removed.append(&mut subdir_result.1);
+            added.append(&mut subdir_result.2);
             return Ok(());
         }
-        if !check_single(&entry_path)? {
-            let entry_str = entry_path.to_str().unwrap();
-            let re = Regex::new(r"(.*)\.ic").unwrap();
-            match re.captures(entry_str) {
-                Some(caps) if caps.len() >= 2 => {
-                    result.push(PathBuf::from(caps.get(1).map_or("", |m| m.as_str())));
-                }
-                _ => result.push(entry_path),
-            };
+        match check_single(&entry_path)? {
+            CheckResult::Changed => changed.push(get_file_name_for_result(&entry_path)),
+            CheckResult::Removed => removed.push(get_file_name_for_result(&entry_path)),
+            CheckResult::Added => added.push(get_file_name_for_result(&entry_path)),
+            CheckResult::Secure => {}
         }
         return Ok(());
     });
-    return Ok(result);
+    return Ok((changed, removed, added));
 }
 
 pub fn init(path: &Path) -> io::Result<()> {
-    crear_ic_files(path)?;
+    clear_ic_files(path)?;
     apply_to_dir(path, |entry_path: PathBuf| -> io::Result<()> {
         if entry_path.is_dir() {
             init(&entry_path)?;
@@ -92,7 +99,7 @@ pub fn read_hash(entry_path: &Path) -> Option<u16> {
     }
 }
 
-pub fn check_single(entry_path: &PathBuf) -> io::Result<bool> {
+pub fn check_single(entry_path: &PathBuf) -> io::Result<CheckResult> {
     let mut hash: u16 = 0;
     let mut recorded: u16 = 0;
 
@@ -104,31 +111,32 @@ pub fn check_single(entry_path: &PathBuf) -> io::Result<bool> {
         .to_str()
         .map_or(false, |s| s.to_lowercase().ends_with(".ic"))
     {
-        let hash = match hash_sum(&entry_path) {
+        hash = match hash_sum(&entry_path) {
             Some(val) => val,
-            None => return Ok(false),
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
         let hash_path = format!("{}.ic", entry_path.display().to_string());
-        let recorded = match read_hash(Path::new(&hash_path)) {
+        recorded = match read_hash(Path::new(&hash_path)) {
             Some(val) => val,
-            None => return Ok(false),
+            None => return Ok(CheckResult::Added),
         };
     } else {
         let mut orig_path = entry_path.display().to_string();
         orig_path.truncate(orig_path.len() - 3);
-        let hash = match hash_sum(Path::new(&orig_path)) {
+        hash = match hash_sum(Path::new(&orig_path)) {
             Some(val) => val,
-            None => return Ok(false),
+            None => return Ok(CheckResult::Removed),
         };
-        let recorded = match read_hash(&entry_path) {
+        recorded = match read_hash(&entry_path) {
             Some(val) => val,
-            None => return Ok(false),
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
+        return Ok(CheckResult::Secure);
     }
     if hash != recorded {
-        return Ok(false);
+        return Ok(CheckResult::Changed);
     }
-    return Ok(true);
+    return Ok(CheckResult::Secure);
 }
 
 pub fn init_single(entry_path: &PathBuf) -> io::Result<()> {
@@ -141,7 +149,7 @@ pub fn init_single(entry_path: &PathBuf) -> io::Result<()> {
     return Ok(());
 }
 
-pub fn crear_ic_files(path: &Path) -> io::Result<()> {
+pub fn clear_ic_files(path: &Path) -> io::Result<()> {
     apply_to_dir(path, |entry_path: PathBuf| -> io::Result<()> {
         let file_name = match entry_path.to_str() {
             Some(val) => val,
@@ -153,4 +161,15 @@ pub fn crear_ic_files(path: &Path) -> io::Result<()> {
         return Ok(());
     });
     return Ok(());
+}
+
+fn get_file_name_for_result(entry_path: &PathBuf) -> PathBuf {
+    let entry_str = entry_path.to_str().unwrap();
+    let re = Regex::new(r"(.*)\.ic").unwrap();
+    match re.captures(entry_str) {
+        Some(caps) if caps.len() >= 2 => {
+            return PathBuf::from(caps.get(1).map_or("", |m| m.as_str()))
+        }
+        _ => return PathBuf::from(entry_str),
+    };
 }

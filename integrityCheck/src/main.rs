@@ -16,11 +16,11 @@ fn main() {
         let _ = init(Path::new(&full_path));
         println!("Dirrectory {full_path:?} have been initialized")
     } else if args.len() > 2 && command == "check" {
-        let res = check(Path::new(&full_path)).unwrap();
-        if res.len() == 0 {
-            println!("Dirrectory {full_path:?} have been checked.No files have been changed.");
+        let (changed, removed, added) = check(Path::new(&full_path)).unwrap();
+        if changed.len() == 0 && removed.len() == 0 && added.len() == 0 {
+            println!("Dirrectory {full_path:?} have been checked. No files have been changed.");
         } else {
-            println!("Dirrectory {full_path:?} have been checked. The following files have been changed:\n{res:?}");
+            println!("Dirrectory {full_path:?} have been checked. \n The following files have been changed:\n{changed:?}\n The following files have been removed:\n{removed:?}\n The following files have been added:\n{added:?}");
         }
     }
 }
