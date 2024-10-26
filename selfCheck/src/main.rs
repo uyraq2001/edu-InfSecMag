@@ -1,3 +1,6 @@
+extern crate integrityCheckLib;
+
+use core::error;
 use std::env::{self, current_dir};
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
@@ -5,40 +8,32 @@ use std::path::{Path, PathBuf};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let filename = &args[0];
-    let lockname = filename.clone().replace(".exe", ".ic");
-    let lockpath = Path::new(&filename);
+    let file_name = &args[0];
+    let lock_name = format!("{}.ic", file_name);
+    let lock_path = Path::new(&lock_name);
 
-    let hash = hash_sum(lockpath);
-    let recorded = match fs::read_to_string(Path::new(&lockname)) {
-        Ok(res) => res.to_string().parse::<u16>().unwrap(),
-        Err(_) => panic!("File have been modified!!!"),
-    };
-    if hash == recorded {
-        println!("File is secure");
-        return;
-    }
-    if recorded == 1234 {
-        println!("It's a first run. File is secure");
-        write!(File::create(lockpath).unwrap(), "{}", hash);
-        return;
-    }
-}
-
-fn hash_sum(path: &Path) -> u16 {
-    let mut result: u16 = 0;
-    let first = true;
-    let bytes = std::fs::read(path).unwrap_or_else(|error| {
-        panic!("Error {error:?} with file {path:?}");
-    });
-
-    for byte_pair in bytes.chunks_exact(2) {
-        if first {
-            result = u16::from_le_bytes([byte_pair[0], byte_pair[1]]);
-        } else {
-            result = result ^ u16::from_le_bytes([byte_pair[0], byte_pair[1]]);
+    let recorded = match integrityCheckLib::read_hash(Path::new(&lock_path)) {
+        Some(val) => val,
+        None => {
+            println!("The integrity check file is missing!!!");
+            return;
         }
+    };
+    let file_path = PathBuf::from(file_name);
+
+    if recorded == 1234 {
+        match integrityCheckLib::init_single(&file_path) {
+            Err(error) => panic!("{error:?}"),
+            _ => {}
+        }
+        println!("It's the first run. The file is secured");
+        return;
     }
 
-    return result;
+    let hash = integrityCheckLib::hash_sum(&file_path).unwrap();
+    if hash != recorded {
+        println!("The binary is compromized!!!");
+        return;
+    }
+    println!("File is secure");
 }
