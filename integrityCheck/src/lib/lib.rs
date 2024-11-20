@@ -19,7 +19,7 @@ pub fn hash_sum(entry_path: &Path) -> Option<u16> {
         return None;
     }
     let mut result: u16 = 0;
-    let first = true;
+    let mut first = true;
     let bytes = match std::fs::read(entry_path) {
         Ok(val) => val,
         Err(_) => return None,
@@ -28,6 +28,7 @@ pub fn hash_sum(entry_path: &Path) -> Option<u16> {
     for byte_pair in bytes.chunks_exact(2) {
         if first {
             result = u16::from_le_bytes([byte_pair[0], byte_pair[1]]);
+            first = false;
         } else {
             result = result ^ u16::from_le_bytes([byte_pair[0], byte_pair[1]]);
         }
